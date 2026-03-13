@@ -16,9 +16,7 @@
       font-family: monospace;
       color: #fff;
     }
-    canvas {
-      border: 2px solid #fff;
-    }
+    canvas { border: 2px solid #fff; }
     #info {
       margin-top: 12px;
       font-size: 13px;
@@ -34,24 +32,52 @@
     }
     #overlay h1 { font-size: 48px; letter-spacing: 8px; }
     #overlay p  { font-size: 16px; color: #aaa; }
+    .btn-row { display: flex; gap: 16px; }
+    button {
+      background: transparent;
+      border: 2px solid #fff;
+      color: #fff;
+      font-family: monospace;
+      font-size: 16px;
+      padding: 10px 24px;
+      cursor: pointer;
+      letter-spacing: 2px;
+      transition: background 0.15s;
+    }
+    button:hover { background: #fff; color: #111; }
+    .diff-row { display: flex; gap: 10px; margin-top: -4px; }
+    .diff-btn {
+      font-size: 13px;
+      padding: 6px 14px;
+      border-color: #888;
+      color: #aaa;
+    }
+    .diff-btn.active { border-color: #fff; color: #fff; background: #333; }
   </style>
 </head>
 <body>
   <div id="overlay">
     <h1>PONG</h1>
-    <p>Press <strong>Space</strong> or tap to start</p>
+    <div class="btn-row">
+      <button id="btn2p">2 PLAYERS</button>
+      <button id="btnCpu">VS CPU</button>
+    </div>
+    <div class="diff-row" id="diffRow" style="display:none">
+      <button class="diff-btn" data-diff="easy">EASY</button>
+      <button class="diff-btn active" data-diff="medium">MEDIUM</button>
+      <button class="diff-btn" data-diff="hard">HARD</button>
+    </div>
   </div>
   <canvas id="c"></canvas>
-  <div id="info">
-    W/S &nbsp;— Left paddle &nbsp;|&nbsp; ↑/↓ — Right paddle &nbsp;|&nbsp; Space — pause
-  </div>
+  <div id="info">W/S — Left paddle &nbsp;|&nbsp; Space — pause</div>
 
   <script>
     const canvas  = document.getElementById('c');
     const ctx     = canvas.getContext('2d');
     const overlay = document.getElementById('overlay');
+    const infoEl  = document.getElementById('info');
+    const diffRow = document.getElementById('diffRow');
 
-    // ─── Layout ───────────────────────────────────────────────────────────────
     const W = 800, H = 500;
     canvas.width  = W;
     canvas.height = H;
@@ -60,46 +86,83 @@
     const BALL_SIZE = 10;
     const WIN_SCORE = 7;
 
+    // ─── AI difficulty settings ───────────────────────────────────────────────
+    const DIFFICULTY = {
+      easy:   { speed: 2.5, errorRange: 40, reactionZone: W * 0.4 },
+      medium: { speed: 3.8, errorRange: 18, reactionZone: W * 0.6 },
+      hard:   { speed: 5.2, errorRange:  5, reactionZone: W       },
+    };
+
+    let mode       = '2p';    // '2p' | 'cpu'
+    let difficulty = 'medium';
+    let aiTarget   = H / 2;   // where the AI paddle is trying to be
+    let aiError    = 0;       // current error offset
+
     // ─── State ────────────────────────────────────────────────────────────────
-    let state = 'idle'; // idle | playing | paused | over
+    let state = 'idle';
+    let leftScore = 0, rightScore = 0;
 
-    let leftScore  = 0;
-    let rightScore = 0;
-
-    const left  = { x: 20,         y: H / 2 - PAD_H / 2, dy: 0 };
-    const right = { x: W - 20 - PAD_W, y: H / 2 - PAD_H / 2, dy: 0 };
-
-    const ball = { x: 0, y: 0, dx: 0, dy: 0 };
+    const left  = { x: 20,             y: H / 2 - PAD_H / 2 };
+    const right = { x: W - 20 - PAD_W, y: H / 2 - PAD_H / 2 };
+    const ball  = { x: 0, y: 0, dx: 0, dy: 0 };
 
     function resetBall(dir = 1) {
-      ball.x  = W / 2;
-      ball.y  = H / 2;
+      ball.x = W / 2;
+      ball.y = H / 2;
       const angle = (Math.random() * 40 - 20) * Math.PI / 180;
       const speed = 5;
       ball.dx = dir * speed * Math.cos(angle);
       ball.dy = speed * Math.sin(angle);
+      // Recalculate AI target on each serve
+      aiError = (Math.random() * 2 - 1) * DIFFICULTY[difficulty].errorRange;
+      aiTarget = H / 2;
     }
 
     function reset() {
-      leftScore  = 0;
+      leftScore = 0;
       rightScore = 0;
       left.y  = H / 2 - PAD_H / 2;
       right.y = H / 2 - PAD_H / 2;
       resetBall();
     }
 
+    // ─── Mode / difficulty buttons ────────────────────────────────────────────
+    document.getElementById('btn2p').addEventListener('click', () => {
+      mode = '2p';
+      diffRow.style.display = 'none';
+      startGame();
+    });
+
+    document.getElementById('btnCpu').addEventListener('click', () => {
+      mode = 'cpu';
+      diffRow.style.display = 'flex';
+    });
+
+    diffRow.querySelectorAll('.diff-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        diffRow.querySelectorAll('.diff-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        difficulty = btn.dataset.diff;
+        startGame();
+      });
+    });
+
+    function startGame() {
+      reset();
+      state = 'playing';
+      overlay.style.display = 'none';
+      infoEl.textContent = mode === 'cpu'
+        ? 'W/S — Your paddle  |  Space — pause'
+        : 'W/S — Left paddle  |  ↑/↓ — Right paddle  |  Space — pause';
+    }
+
     // ─── Input ────────────────────────────────────────────────────────────────
     const keys = {};
     window.addEventListener('keydown', e => {
       keys[e.key] = true;
-
       if (e.key === ' ') {
         e.preventDefault();
-        if (state === 'idle' || state === 'over') {
-          reset();
-          state = 'playing';
-          overlay.style.display = 'none';
-        } else if (state === 'playing') {
+        if (state === 'playing') {
           state = 'paused';
           showOverlay('PAUSED', 'Press Space to resume');
         } else if (state === 'paused') {
@@ -108,44 +171,67 @@
         }
       }
     });
-    window.addEventListener('keyup',  e => { keys[e.key] = false; });
-
-    // tap / click to start
-    canvas.addEventListener('click', () => {
-      if (state === 'idle' || state === 'over') {
-        reset();
-        state = 'playing';
-        overlay.style.display = 'none';
-      }
-    });
+    window.addEventListener('keyup', e => { keys[e.key] = false; });
 
     function showOverlay(title, sub) {
       overlay.innerHTML = `<h1>${title}</h1><p>${sub}</p>`;
       overlay.style.display = 'flex';
     }
 
+    // ─── AI ───────────────────────────────────────────────────────────────────
+    function updateAI() {
+      const cfg = DIFFICULTY[difficulty];
+
+      // Only track ball when it's heading toward the AI side
+      if (ball.dx > 0 && ball.x > W - cfg.reactionZone) {
+        // Predict where ball will cross the right paddle x
+        const timeToReach = (right.x - ball.x) / ball.dx;
+        let predictedY = ball.y + ball.dy * timeToReach;
+
+        // Simulate bounces off top/bottom
+        predictedY = predictedY % (H * 2);
+        if (predictedY < 0) predictedY += H * 2;
+        if (predictedY > H) predictedY = H * 2 - predictedY;
+
+        aiTarget = predictedY + aiError;
+      } else if (ball.dx < 0) {
+        // Ball going away — drift toward center
+        aiTarget = H / 2;
+        aiError = (Math.random() * 2 - 1) * cfg.errorRange;
+      }
+
+      const paddleCenter = right.y + PAD_H / 2;
+      const diff = aiTarget - paddleCenter;
+      const move = Math.min(Math.abs(diff), cfg.speed) * Math.sign(diff);
+      right.y += move;
+      right.y = Math.max(0, Math.min(H - PAD_H, right.y));
+    }
+
     // ─── Update ───────────────────────────────────────────────────────────────
     function update() {
       if (state !== 'playing') return;
 
-      // Paddle movement
-      if (keys['w'] || keys['W']) left.y  -= PAD_SPEED;
-      if (keys['s'] || keys['S']) left.y  += PAD_SPEED;
-      if (keys['ArrowUp'])        right.y -= PAD_SPEED;
-      if (keys['ArrowDown'])      right.y += PAD_SPEED;
+      // Left paddle (player always)
+      if (keys['w'] || keys['W']) left.y -= PAD_SPEED;
+      if (keys['s'] || keys['S']) left.y += PAD_SPEED;
+      left.y = Math.max(0, Math.min(H - PAD_H, left.y));
 
-      left.y  = Math.max(0, Math.min(H - PAD_H, left.y));
-      right.y = Math.max(0, Math.min(H - PAD_H, right.y));
+      // Right paddle
+      if (mode === 'cpu') {
+        updateAI();
+      } else {
+        if (keys['ArrowUp'])   right.y -= PAD_SPEED;
+        if (keys['ArrowDown']) right.y += PAD_SPEED;
+        right.y = Math.max(0, Math.min(H - PAD_H, right.y));
+      }
 
-      // Ball movement
+      // Ball
       ball.x += ball.dx;
       ball.y += ball.dy;
 
-      // Top / bottom bounce
-      if (ball.y <= 0)           { ball.y  = 0;         ball.dy *= -1; }
+      if (ball.y <= 0)            { ball.y = 0;            ball.dy *= -1; }
       if (ball.y + BALL_SIZE >= H){ ball.y = H - BALL_SIZE; ball.dy *= -1; }
 
-      // Paddle collision
       function hitPad(pad) {
         return (
           ball.x < pad.x + PAD_W &&
@@ -157,42 +243,81 @@
 
       if (hitPad(left) && ball.dx < 0) {
         ball.dx *= -1.05;
-        const rel = (ball.y + BALL_SIZE / 2 - (left.y + PAD_H / 2)) / (PAD_H / 2);
-        ball.dy = rel * 5;
+        ball.dy = ((ball.y + BALL_SIZE / 2) - (left.y + PAD_H / 2)) / (PAD_H / 2) * 5;
       }
       if (hitPad(right) && ball.dx > 0) {
         ball.dx *= -1.05;
-        const rel = (ball.y + BALL_SIZE / 2 - (right.y + PAD_H / 2)) / (PAD_H / 2);
-        ball.dy = rel * 5;
+        ball.dy = ((ball.y + BALL_SIZE / 2) - (right.y + PAD_H / 2)) / (PAD_H / 2) * 5;
+        // Recalculate AI error after it hits
+        aiError = (Math.random() * 2 - 1) * DIFFICULTY[difficulty].errorRange;
       }
 
-      // Cap speed
       const speed = Math.hypot(ball.dx, ball.dy);
       if (speed > 15) { ball.dx = ball.dx / speed * 15; ball.dy = ball.dy / speed * 15; }
 
-      // Scoring
-      if (ball.x + BALL_SIZE < 0) {
-        rightScore++;
-        checkWin() || resetBall(1);
-      }
-      if (ball.x > W) {
-        leftScore++;
-        checkWin() || resetBall(-1);
-      }
+      if (ball.x + BALL_SIZE < 0) { rightScore++; checkWin() || resetBall(1);  }
+      if (ball.x > W)             { leftScore++;  checkWin() || resetBall(-1); }
     }
 
     function checkWin() {
       if (leftScore >= WIN_SCORE) {
         state = 'over';
-        showOverlay('LEFT WINS', 'Press Space or click to play again');
+        const msg = mode === 'cpu' ? 'YOU WIN!' : 'LEFT WINS';
+        showOverlay(msg, 'Press Space or click to play again');
         return true;
       }
       if (rightScore >= WIN_SCORE) {
         state = 'over';
-        showOverlay('RIGHT WINS', 'Press Space or click to play again');
+        const msg = mode === 'cpu' ? 'CPU WINS' : 'RIGHT WINS';
+        showOverlay(msg, 'Press Space or click to play again');
         return true;
       }
       return false;
+    }
+
+    // ─── Space / click to restart after game over ─────────────────────────────
+    window.addEventListener('keydown', e => {
+      if (e.key === ' ' && state === 'over') {
+        showMainMenu();
+      }
+    });
+    canvas.addEventListener('click', () => {
+      if (state === 'over') showMainMenu();
+    });
+
+    function showMainMenu() {
+      state = 'idle';
+      overlay.innerHTML = `
+        <h1>PONG</h1>
+        <div class="btn-row">
+          <button id="btn2p">2 PLAYERS</button>
+          <button id="btnCpu">VS CPU</button>
+        </div>
+        <div class="diff-row" id="diffRow" style="display:none">
+          <button class="diff-btn" data-diff="easy">EASY</button>
+          <button class="diff-btn active" data-diff="medium">MEDIUM</button>
+          <button class="diff-btn" data-diff="hard">HARD</button>
+        </div>`;
+      overlay.style.display = 'flex';
+      bindMenuButtons();
+    }
+
+    function bindMenuButtons() {
+      const dr = overlay.querySelector('#diffRow');
+      overlay.querySelector('#btn2p').addEventListener('click', () => {
+        mode = '2p'; dr.style.display = 'none'; startGame();
+      });
+      overlay.querySelector('#btnCpu').addEventListener('click', () => {
+        mode = 'cpu'; dr.style.display = 'flex';
+      });
+      overlay.querySelectorAll('.diff-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          overlay.querySelectorAll('.diff-btn').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          difficulty = btn.dataset.diff;
+          startGame();
+        });
+      });
     }
 
     // ─── Draw ─────────────────────────────────────────────────────────────────
@@ -200,7 +325,6 @@
       ctx.fillStyle = '#111';
       ctx.fillRect(0, 0, W, H);
 
-      // Center dashes
       ctx.setLineDash([10, 10]);
       ctx.strokeStyle = '#444';
       ctx.lineWidth = 2;
@@ -210,21 +334,24 @@
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // Scores
       ctx.fillStyle = '#fff';
       ctx.font = '48px monospace';
       ctx.textAlign = 'center';
       ctx.fillText(leftScore,  W / 4,     60);
       ctx.fillText(rightScore, W * 3 / 4, 60);
 
-      // Paddles
+      // Labels in CPU mode
+      if (mode === 'cpu' && state === 'playing') {
+        ctx.font = '12px monospace';
+        ctx.fillStyle = '#555';
+        ctx.fillText('YOU', W / 4,     80);
+        ctx.fillText('CPU', W * 3 / 4, 80);
+      }
+
       ctx.fillStyle = '#fff';
       ctx.fillRect(left.x,  left.y,  PAD_W, PAD_H);
       ctx.fillRect(right.x, right.y, PAD_W, PAD_H);
-
-      // Ball
-      ctx.fillStyle = '#fff';
-      ctx.fillRect(ball.x, ball.y, BALL_SIZE, BALL_SIZE);
+      ctx.fillRect(ball.x,  ball.y,  BALL_SIZE, BALL_SIZE);
     }
 
     // ─── Loop ─────────────────────────────────────────────────────────────────
